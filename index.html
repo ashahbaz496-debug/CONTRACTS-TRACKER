@@ -47,6 +47,163 @@ button{font:inherit}
 <header><h1>My House Build Tracker</h1><p class="sub">Rooms, work checklists and contractor payments in one place.</p></header>
 <nav id="nav"></nav>
 <main id="app"></main>
-<script src="app.js"></script>
+<script>
+const KEY='houseTracker.v1';
+const uid=()=>Math.random().toString(36).slice(2,9);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const fmt=iso=>{const q=String(iso).split('-');return q.length===3?q[2]+'/'+q[1]+'/'+q[0]:iso};
+function parse(s){const m=String(s).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/);if(!m)return null;let d=+m[1],mo=+m[2],y=+m[3];if(y<100)y+=2000;const t=new Date(y,mo-1,d);if(t.getFullYear()!==y||t.getMonth()!==mo-1||t.getDate()!==d)return null;return y+'-'+String(mo).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+const lbl=x=>{const t=[x.method,x.note].filter(Boolean).join(' - ');return t?'- '+esc(t):''};
+const TRADES=['Plumber','Tile fixer','Door maker','Electrician','Mason','Carpenter','Painter','Steel fixer','Woodwork','Aluminium/Glass','Marble/Granite','Other'];
+const DM=['Cash','Bank transfer','Easypaisa','JazzCash','Cheque'];
+let S=load();let tab='payments';let open={};let filt='';
+function def(){return{cur:'Rs',methods:DM.slice(),trades:TRADES.slice(),rooms:['Living Room','Kitchen','Bathroom','Bedroom'].map(n=>({id:uid(),name:n,tasks:['Electrical points','Plumbing','Tiles / flooring','Doors & windows','Paint'].map(t=>({id:uid(),text:t,done:false,cid:''}))})),contractors:[]}}
+function load(){try{const r=localStorage.getItem(KEY);if(r)return Object.assign({methods:DM.slice(),trades:TRADES.slice()},JSON.parse(r))}catch(e){}return def()}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}queuePush()}
+const SK='houseTracker.sync';let SY={},syncMsg='',tm;
+try{SY=JSON.parse(localStorage.getItem(SK))||{}}catch(e){}
+if(!SY.url)SY.url='https://script.google.com/macros/s/AKfycbw3jKZtkjcG7O4OQyyaExd5glOfstZoHOhidroSMirI2ycTAROCOpfaSkSMR9J7xank/exec';
+function status(m){syncMsg=m;const el=document.getElementById('syncMsg');if(el)el.textContent=m}
+function queuePush(){if(SY.url&&SY.key){clearTimeout(tm);tm=setTimeout(push,1500)}}
+async function push(){if(!SY.url)return alert('Save the sheet URL first.');status('Syncing...');
+ try{const r=await fetch(SY.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({key:SY.key||'',action:'save',data:S})});const j=await r.json();
+ status(j.ok?'Synced to sheet at '+new Date().toLocaleTimeString():'Sheet error: '+j.error)}catch(e){status('Could not reach the sheet. Check the URL and that access is set to Anyone.')}}
+async function pull(){if(!SY.url)return alert('Save the sheet URL first.');
+ try{const r=await fetch(SY.url+'?action=load&key='+encodeURIComponent(SY.key||''));const j=await r.json();if(!j.ok)throw new Error(j.error);
+ if(!j.data)return alert('The sheet has no saved data yet.');if(!confirm('Replace the data on this device with the sheet data?'))return;
+ S=Object.assign({methods:DM.slice(),trades:TRADES.slice()},j.data);try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}render();status('Loaded from sheet')}catch(e){alert('Could not load: '+e.message)}}
+const paid=c=>c.payments.reduce((a,p)=>a+p.amount,0);
+const money=n=>S.cur+' '+Math.round(n).toLocaleString('en-US');
+const cname=id=>{const c=S.contractors.find(x=>x.id===id);return c?c.name+' ('+c.trade+')':''};
+const cOpts=sel=>'<option value="">No contractor</option>'+S.contractors.map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${esc(c.name)} - ${esc(c.trade)}</option>`).join('');
+
+function render(){
+ const tabs=[['payments','Payments'],['overview','Overview'],['rooms','Rooms'],['contractors','Contractors'],['settings','Backup & settings']];
+ nav.innerHTML=tabs.map(t=>`<button class="${tab===t[0]?'on':''}" data-act="tab" data-v="${t[0]}">${t[1]}</button>`).join('');
+ app.innerHTML={payments,overview,rooms,contractors,settings}[tab]();
+}
+function payments(){
+ const all=S.contractors.flatMap(c=>c.payments.map(p=>({...p,c})));
+ const list=all.filter(x=>!filt||x.c.id===filt).sort((a,b)=>b.date.localeCompare(a.date));
+ const tot=list.reduce((a,x)=>a+x.amount,0),none=!S.contractors.length;
+ return`<div class="card"><h3>Record a payment</h3>
+ <datalist id="trades">${S.trades.map(t=>`<option value="${esc(t)}">`).join('')}</datalist><datalist id="methods">${S.methods.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
+ <div class="row"><select id="qc"><option value="">Select contractor</option>${S.contractors.map(c=>`<option value="${c.id}">${esc(c.name)} - ${esc(c.trade)} (balance ${money(c.agreed-paid(c))})</option>`).join('')}<option value="__new" ${none?'selected':''}>+ Add new contractor</option></select></div>
+ <div id="newFields" class="card" style="display:${none?'block':'none'};margin:8px 0"><b>New contractor</b>
+  <div class="row"><input id="qn" placeholder="Name"><input id="qt" list="trades" placeholder="Trade (pick or type your own)"></div>
+  <div class="row"><input id="qp" placeholder="Phone"><input id="qag" type="number" min="0" placeholder="Total agreed amount"></div></div>
+ <div class="row"><input id="qd" value="${fmt(today())}" placeholder="DD/MM/YYYY" inputmode="numeric"><input id="qa2" type="number" min="0" placeholder="Amount paid"></div>
+ <div class="row"><input id="qmth" list="methods" placeholder="Method (cash, bank...)"><input id="qnote" placeholder="Note (advance, 2nd installment...)"></div>
+ <button class="btn" data-act="qpay">Save payment</button></div>
+ <div class="card"><div class="head"><h3>All payments</h3><select id="filt" data-act="filt" style="max-width:220px"><option value="">All contractors</option>${S.contractors.map(c=>`<option value="${c.id}" ${filt===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div>
+ <p class="mute">${list.length} payments, total <b>${money(tot)}</b></p>
+ ${list.map(x=>`<div class="pay"><span>${fmt(x.date)} <b>${esc(x.c.name)}</b> <span class="tag">${esc(x.c.trade)}</span> <span class="mute">${lbl(x)}</span></span><span><b>${money(x.amount)}</b> <button class="btn ghost sm" data-act="editPay" data-c="${x.c.id}" data-p="${x.id}">Edit</button> <button class="btn del sm" data-act="delPay" data-c="${x.c.id}" data-p="${x.id}">X</button></span></div>`).join('')||'<p class="empty">No payments recorded yet. Use the form above.</p>'}</div>`;
+}
+function overview(){
+ const tasks=S.rooms.flatMap(r=>r.tasks),done=tasks.filter(t=>t.done).length;
+ const agreed=S.contractors.reduce((a,c)=>a+c.agreed,0),p=S.contractors.reduce((a,c)=>a+paid(c),0);
+ const pct=tasks.length?Math.round(done/tasks.length*100):0;
+ let h=`<div class="grid"><div class="stat"><b>${pct}%</b><span>${done} of ${tasks.length} tasks done</span></div>
+ <div class="stat"><b>${money(agreed)}</b><span>Total agreed</span></div>
+ <div class="stat"><b>${money(p)}</b><span>Total paid</span></div>
+ <div class="stat"><b class="${agreed-p>0?'neg':'pos'}">${money(agreed-p)}</b><span>Balance to pay</span></div></div>
+ <div class="card"><h3>Room progress</h3>`;
+ h+=S.rooms.map(r=>{const d=r.tasks.filter(t=>t.done).length,n=r.tasks.length;return`<div style="margin-top:10px"><div class="head"><span>${esc(r.name)}</span><span class="mute">${d}/${n}</span></div><div class="bar"><i style="width:${n?d/n*100:0}%"></i></div></div>`}).join('')||'<p class="empty">No rooms yet. Add one in the Rooms tab.</p>';
+ h+='</div><div class="card"><h3>Who is owed money</h3>';
+ const owed=S.contractors.filter(c=>c.agreed-paid(c)>0);
+ h+=owed.map(c=>`<div class="pay"><span>${esc(c.name)} <span class="mute">${esc(c.trade)}</span></span><b class="neg">${money(c.agreed-paid(c))}</b></div>`).join('')||'<p class="empty">Nothing pending.</p>';
+ return h+'</div>';
+}
+function rooms(){
+ let h=`<div class="card"><div class="row"><input id="newRoom" placeholder="New room (e.g. Lounge, Store, Roof)"><button class="btn" data-act="addRoom">Add room</button></div></div>`;
+ h+=S.rooms.map(r=>{const d=r.tasks.filter(t=>t.done).length;
+ return`<div class="card"><div class="head"><h3>${esc(r.name)} <span class="mute">${d}/${r.tasks.length}</span></h3><span><button class="btn ghost sm" data-act="renRoom" data-r="${r.id}">Rename</button> <button class="btn del sm" data-act="delRoom" data-r="${r.id}">Delete</button></span></div>
+ <div class="bar"><i style="width:${r.tasks.length?d/r.tasks.length*100:0}%"></i></div>
+ ${r.tasks.map(t=>`<div class="task ${t.done?'done':''}"><input type="checkbox" ${t.done?'checked':''} data-act="toggle" data-r="${r.id}" data-t="${t.id}"><span class="t">${esc(t.text)}</span>
+ <select data-act="assign" data-r="${r.id}" data-t="${t.id}" style="max-width:150px">${cOpts(t.cid)}</select>
+ <button class="btn ghost sm" data-act="renTask" data-r="${r.id}" data-t="${t.id}">Edit</button><button class="btn del sm" data-act="delTask" data-r="${r.id}" data-t="${t.id}">X</button></div>`).join('')}
+ <div class="row"><input id="nt-${r.id}" placeholder="Add work item (e.g. False ceiling)"><button class="btn sm" data-act="addTask" data-r="${r.id}">Add item</button></div></div>`}).join('');
+ return h;
+}
+function contractors(){
+ let h=`<div class="card"><h3>Add contractor</h3><div class="row"><input id="cn" placeholder="Name"><input id="ct" list="trades" placeholder="Trade (pick or type your own)"><datalist id="trades">${S.trades.map(t=>`<option value="${t}">`).join('')}</datalist></div>
+ <div class="row"><input id="cp" placeholder="Phone"><input id="ca" type="number" min="0" placeholder="Agreed amount"><button class="btn" data-act="addC">Add contractor</button></div></div>`;
+ h+=S.contractors.map(c=>{const p=paid(c),bal=c.agreed-p,isOpen=open[c.id];
+ const rms=S.rooms.filter(r=>r.tasks.some(t=>t.cid===c.id)).map(r=>r.name).join(', ');
+ return`<div class="card"><div class="head"><div><h3>${esc(c.name)} <span class="tag">${esc(c.trade)}</span></h3><p class="mute" style="margin:2px 0">${esc(c.phone)}${rms?' | Rooms: '+esc(rms):''}</p></div>
+ <span><button class="btn ghost sm" data-act="editC" data-c="${c.id}">Edit</button> <button class="btn del sm" data-act="delC" data-c="${c.id}">Delete</button></span></div>
+ <div class="bar"><i style="width:${c.agreed?Math.min(100,p/c.agreed*100):0}%"></i></div>
+ <div class="head"><span>Agreed <b>${money(c.agreed)}</b></span><span>Paid <b class="pos">${money(p)}</b></span><span>${bal<0?'Overpaid':'Balance'} <b class="${bal>0?'neg':'pos'}">${money(Math.abs(bal))}</b></span></div>
+ ${c.notes?`<p class="mute">${esc(c.notes)}</p>`:''}
+ <div style="margin-top:8px">${c.payments.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(x=>`<div class="pay"><span>${fmt(x.date)} ${lbl(x)}</span><span><b>${money(x.amount)}</b> <button class="btn ghost sm" data-act="editPay" data-c="${c.id}" data-p="${x.id}">Edit</button> <button class="btn del sm" data-act="delPay" data-c="${c.id}" data-p="${x.id}">X</button></span></div>`).join('')||'<p class="mute">No payments yet.</p>'}</div>
+ <div class="row"><input id="pd-${c.id}" value="${fmt(today())}" placeholder="DD/MM/YYYY" inputmode="numeric"><input id="pa-${c.id}" type="number" min="0" placeholder="Amount paid"><input id="pn-${c.id}" placeholder="Note (advance, cash, bank...)"><button class="btn sm" data-act="addPay" data-c="${c.id}">Record payment</button></div></div>`}).join('');
+ return h;
+}
+function settings(){
+ return`<div class="card"><h3>Currency label</h3><div class="row"><input id="cur" value="${esc(S.cur)}"><button class="btn" data-act="cur">Save</button></div></div>
+ <div class="card"><h3>Google Sheet sync</h3><p class="mute">Paste the Web app URL and the secret key from your Apps Script. Once saved, every change is sent to your sheet automatically. These two values stay in this browser only.</p>
+ <div class="row"><input id="syu" placeholder="Web app URL (https://script.google.com/...)" value="${esc(SY.url||'')}"></div>
+ <div class="row"><input id="syk" placeholder="Secret key" value="${esc(SY.key||'')}"><button class="btn" data-act="sySave">Save</button></div>
+ <div class="row"><button class="btn ghost" data-act="syPush">Send to sheet now</button><button class="btn ghost" data-act="syPull">Load from sheet</button></div>
+ <p class="mute" id="syncMsg">${esc(syncMsg)}</p></div>
+ <div class="card"><h3>Your lists</h3><p class="mute">Separate items with commas. These appear as suggestions when you add a contractor or payment.</p>
+ <div class="row"><input id="lt" value="${esc(S.trades.join(', '))}"></div><div class="row"><input id="lm" value="${esc(S.methods.join(', '))}"><button class="btn" data-act="lists">Save lists</button></div></div>
+ <div class="card"><h3>Backup</h3><p class="mute">Data is stored in this browser only. Download a backup regularly, and use Import to move it to another phone or laptop.</p>
+ <div class="row"><button class="btn" data-act="export">Download backup</button><input type="file" id="imp" accept=".json" style="flex:2"></div></div>
+ <div class="card"><h3>Start over</h3><button class="btn del" data-act="reset">Erase all data</button></div>`;
+}
+const val=id=>document.getElementById(id)?.value.trim()||'';
+const room=id=>S.rooms.find(r=>r.id===id);
+document.addEventListener('click',e=>{
+ const b=e.target.closest('[data-act]');if(!b||b.tagName==='SELECT'||b.type==='checkbox')return;
+ const d=b.dataset,a=d.act;
+ if(a==='tab')tab=d.v;
+ else if(a==='addRoom'){const n=val('newRoom');if(!n)return;S.rooms.push({id:uid(),name:n,tasks:[]})}
+ else if(a==='renRoom'){const r=room(d.r),n=prompt('Room name',r.name);if(n)r.name=n.trim()}
+ else if(a==='delRoom'){if(!confirm('Delete this room and its items?'))return;S.rooms=S.rooms.filter(r=>r.id!==d.r)}
+ else if(a==='addTask'){const n=val('nt-'+d.r);if(!n)return;room(d.r).tasks.push({id:uid(),text:n,done:false,cid:''})}
+ else if(a==='renTask'){const t=room(d.r).tasks.find(t=>t.id===d.t),n=prompt('Work item',t.text);if(n)t.text=n.trim()}
+ else if(a==='delTask'){const r=room(d.r);r.tasks=r.tasks.filter(t=>t.id!==d.t)}
+ else if(a==='addC'){const n=val('cn');if(!n)return alert('Enter a name.');S.contractors.push({id:uid(),name:n,trade:val('ct')||'Other',phone:val('cp'),agreed:+val('ca')||0,notes:'',payments:[]})}
+ else if(a==='editC'){const c=S.contractors.find(x=>x.id===d.c);
+  c.name=prompt('Name',c.name)||c.name;c.trade=prompt('Trade',c.trade)||c.trade;c.phone=prompt('Phone',c.phone)??c.phone;
+  const ag=prompt('Agreed amount',c.agreed);if(ag!==null&&ag!==''&&!isNaN(ag))c.agreed=+ag;c.notes=prompt('Notes',c.notes)??c.notes}
+ else if(a==='delC'){if(!confirm('Delete contractor and all payments?'))return;S.contractors=S.contractors.filter(c=>c.id!==d.c);S.rooms.forEach(r=>r.tasks.forEach(t=>{if(t.cid===d.c)t.cid=''}))}
+ else if(a==='addPay'){const amt=+val('pa-'+d.c),iso=parse(val('pd-'+d.c));if(!iso)return alert('Enter the date as DD/MM/YYYY.');if(!(amt>0))return alert('Enter the amount paid.');S.contractors.find(c=>c.id===d.c).payments.push({id:uid(),date:iso,amount:amt,method:'',note:val('pn-'+d.c)})}
+ else if(a==='qpay'){const cid=val('qc'),iso=parse(val('qd')),amt=+val('qa2');
+  if(!cid)return alert('Choose a contractor or add a new one.');
+  if(!iso)return alert('Enter the date as DD/MM/YYYY.');
+  if(!(amt>0))return alert('Enter the amount paid.');
+  let c;
+  if(cid==='__new'){const n=val('qn');if(!n)return alert('Enter the contractor name.');c={id:uid(),name:n,trade:val('qt')||'Other',phone:val('qp'),agreed:+val('qag')||0,notes:'',payments:[]};S.contractors.push(c)}
+  else c=S.contractors.find(x=>x.id===cid);
+  c.payments.push({id:uid(),date:iso,amount:amt,method:val('qmth'),note:val('qnote')})}
+ else if(a==='editPay'){const c=S.contractors.find(x=>x.id===d.c),p=c.payments.find(x=>x.id===d.p);
+  const ds=prompt('Date (DD/MM/YYYY)',fmt(p.date));if(ds===null)return;const iso=parse(ds);if(!iso)return alert('Use DD/MM/YYYY.');
+  const am=prompt('Amount',p.amount);if(am===null||isNaN(am)||+am<=0)return;
+  p.date=iso;p.amount=+am;p.method=prompt('Method (cash, bank...)',p.method||'')??p.method;p.note=prompt('Note',p.note||'')??p.note}
+ else if(a==='sySave'){SY={url:val('syu'),key:val('syk')};try{localStorage.setItem(SK,JSON.stringify(SY))}catch(x){}status(SY.url?'Saved. Syncing starts with your next change.':'Sync turned off.')}
+ else if(a==='syPush'){push();return}
+ else if(a==='syPull'){pull();return}
+ else if(a==='lists'){const sp=id=>val(id).split(',').map(x=>x.trim()).filter(Boolean);S.methods=sp('lm');S.trades=sp('lt')}
+ else if(a==='delPay'){const c=S.contractors.find(c=>c.id===d.c);c.payments=c.payments.filter(p=>p.id!==d.p)}
+ else if(a==='cur'){S.cur=val('cur')||'Rs'}
+ else if(a==='export'){const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([JSON.stringify(S,null,1)],{type:'application/json'}));l.download='house-backup-'+fmt(today()).replace(/\//g,'-')+'.json';l.click();return}
+ else if(a==='reset'){if(!confirm('Erase everything? This cannot be undone.'))return;S=def()}
+ save();render();
+});
+document.addEventListener('change',e=>{
+ const t=e.target,d=t.dataset;
+ if(t.id==='qc'){document.getElementById('newFields').style.display=t.value==='__new'?'block':'none';return}
+ if(t.id==='filt'){filt=t.value}
+ else if(d.act==='toggle'){room(d.r).tasks.find(x=>x.id===d.t).done=t.checked}
+ else if(d.act==='assign'){room(d.r).tasks.find(x=>x.id===d.t).cid=t.value}
+ else if(t.id==='imp'&&t.files[0]){const f=new FileReader();f.onload=()=>{try{const j=JSON.parse(f.result);if(!j.rooms||!j.contractors)throw 0;S=Object.assign({methods:DM.slice(),trades:TRADES.slice()},j);save();render()}catch(x){alert('This file is not a valid backup.')}};f.readAsText(t.files[0]);return}
+ else return;
+ save();render();
+});
+render();
+</script>
 </body>
 </html>
