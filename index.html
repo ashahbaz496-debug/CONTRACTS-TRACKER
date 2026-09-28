@@ -63,12 +63,13 @@ function load(){try{const r=localStorage.getItem(KEY);if(r)return Object.assign(
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}queuePush()}
 const SK='houseTracker.sync';let SY={},syncMsg='',tm;
 try{SY=JSON.parse(localStorage.getItem(SK))||{}}catch(e){}
-if(!SY.url)SY.url='https://script.google.com/macros/s/AKfycbw3jKZtkjcG7O4OQyyaExd5glOfstZoHOhidroSMirI2ycTAROCOpfaSkSMR9J7xank/exec';
+if(!SY.url) SY.url='https://script.google.com/macros/s/AKfycbw3jKZtkjcG7O4OQyyaExd5glOfstZoHOhidroSMirI2ycTAROCOpfaSkSMR9J7xank/exec';
+
 function status(m){syncMsg=m;const el=document.getElementById('syncMsg');if(el)el.textContent=m}
-function queuePush(){if(SY.url&&SY.key){clearTimeout(tm);tm=setTimeout(push,1500)}}
+function queuePush(){if(SY.url){clearTimeout(tm);tm=setTimeout(push,1500)}}
 async function push(){if(!SY.url)return alert('Save the sheet URL first.');status('Syncing...');
  try{const r=await fetch(SY.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({key:SY.key||'',action:'save',data:S})});const j=await r.json();
- status(j.ok?'Synced to sheet at '+new Date().toLocaleTimeString():'Sheet error: '+j.error)}catch(e){status('Could not reach the sheet. Check the URL and that access is set to Anyone.')}}
+ status(j.ok?'Synced to sheet at '+new Date().toLocaleTimeString():'Sheet error: '+(j.error||'Unknown error'))}catch(e){status('Could not reach the sheet. Check the URL and that access is set to Anyone.')}}
 async function pull(){if(!SY.url)return alert('Save the sheet URL first.');
  try{const r=await fetch(SY.url+'?action=load&key='+encodeURIComponent(SY.key||''));const j=await r.json();if(!j.ok)throw new Error(j.error);
  if(!j.data)return alert('The sheet has no saved data yet.');if(!confirm('Replace the data on this device with the sheet data?'))return;
@@ -89,7 +90,7 @@ function payments(){
  const tot=list.reduce((a,x)=>a+x.amount,0),none=!S.contractors.length;
  return`<div class="card"><h3>Record a payment</h3>
  <datalist id="trades">${S.trades.map(t=>`<option value="${esc(t)}">`).join('')}</datalist><datalist id="methods">${S.methods.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
- <div class="row"><select id="qc"><option value="">Select contractor</option>${S.contractors.map(c=>`<option value="${c.id}">${esc(c.name)} - ${esc(c.trade)} (balance ${money(c.agreed-paid(c))})</option>`).join('')}<option value="__new" ${none?'selected':''}>+ Add new contractor</option></select></div>
+ <div class="row"><select id="qc"><option value="">Select contractor</option>${S.contractors.map(c=>`<option value="${c.id}">${esc(c.name)} - ${esc(c.trade)} (balance${money(c.agreed-paid(c))})</option>`).join('')}<option value="__new" ${none?'selected':''}>+ Add new contractor</option></select></div>
  <div id="newFields" class="card" style="display:${none?'block':'none'};margin:8px 0"><b>New contractor</b>
   <div class="row"><input id="qn" placeholder="Name"><input id="qt" list="trades" placeholder="Trade (pick or type your own)"></div>
   <div class="row"><input id="qp" placeholder="Phone"><input id="qag" type="number" min="0" placeholder="Total agreed amount"></div></div>
@@ -144,7 +145,7 @@ function settings(){
  return`<div class="card"><h3>Currency label</h3><div class="row"><input id="cur" value="${esc(S.cur)}"><button class="btn" data-act="cur">Save</button></div></div>
  <div class="card"><h3>Google Sheet sync</h3><p class="mute">Paste the Web app URL and the secret key from your Apps Script. Once saved, every change is sent to your sheet automatically. These two values stay in this browser only.</p>
  <div class="row"><input id="syu" placeholder="Web app URL (https://script.google.com/...)" value="${esc(SY.url||'')}"></div>
- <div class="row"><input id="syk" placeholder="Secret key" value="${esc(SY.key||'')}"><button class="btn" data-act="sySave">Save</button></div>
+ <div class="row"><input id="syk" placeholder="Secret key (optional)" value="${esc(SY.key||'')}"><button class="btn" data-act="sySave">Save</button></div>
  <div class="row"><button class="btn ghost" data-act="syPush">Send to sheet now</button><button class="btn ghost" data-act="syPull">Load from sheet</button></div>
  <p class="mute" id="syncMsg">${esc(syncMsg)}</p></div>
  <div class="card"><h3>Your lists</h3><p class="mute">Separate items with commas. These appear as suggestions when you add a contractor or payment.</p>
